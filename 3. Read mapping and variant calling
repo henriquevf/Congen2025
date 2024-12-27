@@ -1,1 +1,100 @@
+# Read Mapping and Variant Calling 
+
+## Part one: Read Mapping
+
+### File types for Part 1
+
+- fastq files -> this file stores raw sequence data from the sequencing machine. For paired-read sequencing, wew ill obtain a Read 1 (R1) file and Read 1 (R2) file.  
+
+Let's look at our fastq file: 
+
+```
+less /anvil/scratch/x-hfigueiro/NA5206_AGTTGGCT-GCAACCAT_L003_n100_R2_001.fastq.gz
+```
+
+The four lines correspond to: 
+```
+1. A sequence identifier with information about the sequencing run and the cluster. 
+
+2. The sequence (the base calls; A, C, T, G and N).
+
+3. A separator, which is simply a plus (+) sign.
+
+4. The base call quality scores. These are Phred +33 encoded, using ASCII characters to represent the numerical quality scores.
+```
+
+- Let's look at our BAM file, which stands for Binary Alignment Map:
+```
+module load samtools 
+
+samtools view /anvil/scratch/x-hfigueiro/NA5206.loxAfr4_NC000934_subsampled.bam | less -S
+```
+
+### Setting up our directories
+
+First, let's make a new directory in our home folder: 
+
+``` 
+cd #cd to your home directory
+mkdir Alignment_SNPcalling
+```
+
+###  Alignment of reads to reference genome
+
+First, we need to align our trimmed fastq files to the reference genome. 
+
+What is a reference genome and where did we get it? We can search for previously published reference genomes on the National Center for Biotechnology Information (NCBI)'s website (https://www.ncbi.nlm.nih.gov/search/) 
+
+- African savannah elephant reference genome: https://www.ncbi.nlm.nih.gov/datasets/taxonomy/9785/
+
+
+
+First, we need to make a job file that contains the script we want to run. 
+
+```
+cd /home/YOURNAME/Alignment_SNPcalling
+touch 01_alignment.sh
+```
+Then we will copy and paste this information below into our alignment script: 
+
+```
+vim 01_alignment.sh
+#paste the contents below
+wq
+```
+
+Script for alignment
+```
+#!/bin/sh -l
+#SBATCH -A bio240351  
+#SBATCH -p wholenode 
+#SBATCH --nodes=1
+#SBATCH --ntasks=1 
+#SBATCH --time=1:30:00
+#SBATCH --job-name alignment
+
+module load bwa
+module load samtools
+
+R1=/anvil/scratch/x-hfigueiro/NA5206_AGTTGGCT-GCAACCAT_L003_n100_R1_001.fastq.gz
+R2=/anvil/scratch/x-hfigueiro/NA5206_AGTTGGCT-GCAACCAT_L003_n100_R2_001.fastq.gz
+REF=/anvil/scratch/x-hfigueiro/Chromosomes.v2.fasta
+OUTDIR=/anvil/scratch/x-lhennelly/ConGen2025/Day1
+
+bwa index ${REF} #index the reference genome of the Elephant
+
+bwa mem -R "@RG\tID:NA5206\tSM:NA5206" ${REF} ${R1} ${R2} | \
+samtools view -q 10 -h -b - | \
+samtools sort -o ${OUTDIR}/NamibiaElephant_NA5206.bam -
+```
+
+
+We can view the out file to see how the job is running: 
+
+```
+less slurm-9062900.out
+```
+We can see the job is running. This will take a long time to align the fastq file to the reference genome, so we will use our previously made reference genome. 
+
+
 
