@@ -1,1 +1,427 @@
+# Demographic Inference Tutorial for Conservation Genomics
 
+Demographic inference provides insights into the historical population dynamics of species, such as changes in population size, migration patterns, and bottlenecks. 
+
+By the end of this tutorial, you will:
+
+1.	**Understand the Tools**: Gain a clear understanding of the strengths and applications of **PSMC**  in demographic inference.
+
+2.	**Perform a Full Workflow**: Learn to execute a complete demographic inference workflow, from preparing input data to visualizing results, using PSMC for long-term population history analysis.
+
+3.	**Analyze Results**: Develop skills to interpret the PSMC output, including identifying patterns of population size changes, such as bottlenecks, expansions, or stability over time.
+
+4.	**Adapt to Your Data**: Understand how to modify parameters like mutation rate and generation time to suit different species, enabling tailored analyses for your datasets.
+
+5.	**Integrate Insights**: Explore how demographic histories can inform broader research questions, such as evolutionary processes, species conservation planning, and the impacts of environmental changes.
+
+---
+
+**IMPORTANT:** To run the analyses on ANVIL, use the job files at the end of the page. Copy and paste to a file (e.g. using `nano`) and submit the job. The plot will also be done on ANVIL using the `sinteractive` mode. Do not try to copy and paste the individual commands in the terminal.
+
+---
+
+## **Section 1: Long-Term Demographic History with PSMC**
+
+**About PSMC**
+
+PSMC (Pairwise Sequentially Markovian Coalescent) models long-term population size changes using heterozygous sites in a single diploid genome.
+
+**Input Requirements**
+
+1.	Diploid genome in FASTA format.
+
+2.	Mask file indicating callable regions.
+
+## Data preparation
+
+**Step 1: Generate Consensus Sequence**
+
+Use samtools to call variants and create a diploid consensus sequence:
+
+```bash
+bcftools mpileup -Ou -f <reference> <bam_file> | bcftools call -c | [vcfutils.pl](http://vcfutils.pl/) vcf2fq -d 10 -D 100 > <output.fq
+```
+
+- `bcftools mpileup`:
+    - `-f <reference.fa>`: Specifies the reference genome FASTA file against which reads in input.bam are aligned.
+    - `input.bam`: The BAM file containing aligned sequencing reads for the individual genome.
+    - **Purpose**: Identifies variant sites in the input BAM file, calculating genotype likelihoods.
+- `bcftools call -c`:
+    - `-c`: Performs consensus calling for genotypes at variant sites.
+    - **Purpose**: Assigns genotypes at variant sites based on likelihood estimates.
+- `vcfutils.pl`: A Perl script from the SAMtools package used to process VCF files.
+    - `vcf2fq`: Converts a VCF file into a FASTQ-like format that records consensus sequence information.
+    - `-d 10`: Sets the minimum read depth threshold (e.g., only consider positions with at least 10 reads supporting the genotype).
+    - `-D 100`: Sets the maximum read depth threshold to filter out regions with excessively high coverage (indicative of duplications or sequencing errors).
+    - `variants.vcf`: Input VCF file containing variant calls.
+    - `> output.fq`: Redirects the output to a file named consensus.fq.
+    - **Purpose**: Produces a consensus sequence in FASTQ format for downstream analysis.
+
+**Step 2: Convert to PSMC Format**
+
+Convert the consensus FASTQ to PSMC input format:
+
+```bash
+fq2psmcfa -q20 consensus.fq > diploid.psmcfa
+```
+
+- `fq2psmcfa`: A tool from the PSMC package that converts a FASTQ-like file into the PSMC input format.
+    - `-q20`: Filters out bases with a quality score below 20, ensuring only high-confidence bases are retained.
+    - `consensus.fq`: Input FASTQ-like file from Step 1.
+    - `> diploid.psmcfa`: Redirects the output to a file named diploid.psmcfa, which is required for the PSMC analysis.
+    - **Purpose**: Prepares the data for PSMC by creating a diploid consensus file in .psmcfa format.
+
+## Running PSMC
+
+**Step 3: Run PSMC**
+
+Run the PSMC analysis:
+
+```bash
+psmc -N25 -t15 -r5 -p "4+25*2+4+6" -o output.psmc diploid.psmcfa
+```
+
+- `psmc`: Main executable for running the PSMC model.
+    - `-N25`: Sets the maximum number of iterations to 25 for the Expectation-Maximization (EM) algorithm.
+    - `-t15`: Specifies the initial value for the time segment parameter. This helps determine the resolution of population size changes over time.
+    - `-r5`: Specifies the initial value for the mutation rate scaling factor. A higher value allows finer scaling of mutation rates during optimization.
+    - `-p "4+25*2+4+6"`:
+        - This parameter defines the pattern of time intervals for coalescent events.
+        - `4`: Represents the first 4 intervals with finer resolution.
+        - `25*2`: Indicates 25 intervals with a constant width scaled by 2.
+        - `4+6`: Indicates the last 4 intervals followed by 6 broader intervals.
+    - `-o output.psmc`: Specifies the output file for the results of the PSMC analysis.
+    - `diploid.psmcfa`: Input file generated in Step 2.
+    
+    ### A brief note on the “-p” parameter
+    
+    The -p **parameter in PSMC** controls how the program splits time into intervals for estimating population sizes. Think of it as dividing the timeline of a species’ history into chunks to see how the population changed over time.
+    
+    **Simple Explanation:**
+    
+    - **Imagine a timeline** of your species’ past.
+    - **The** -p **value decides** how many chunks (time intervals) the timeline is divided into and how detailed each chunk is.
+    - For example, **“4+25*2+4+6”** means:
+    - **4 early chunks**: Very detailed near the present (fine-grained for recent history).
+    - **25 chunks scaled by 2**: Less detailed as we go further back in time.
+    - **4 + 6 chunks**: Even broader for ancient times, summarizing big changes.
+    
+    The idea is to have **more detail for recent times** (because we know more) and **less detail for ancient times** (where the data is fuzzier).
+    
+    **Analogy:**
+    
+    Think of looking at a city map:
+    
+    •	**Recent times (near your home)**: Zoom in and see every street (more chunks, detailed).
+    
+    •	**Ancient times (far from home)**: Zoom out and only see highways (fewer chunks, summarized).
+    
+    This division lets PSMC focus on changes we can measure well while not overanalyzing parts of the timeline with limited data.
+    
+
+## Data visualization
+
+**Step 4: Visualize Results**
+
+Use the `psmc_plot.pl` script to generate a plot:
+
+```bash
+psmc_plot.pl -g <generation_time> -u <mutation_rate> -p output output.psmc
+```
+
+- `psmc_plot.pl`: A Perl script provided with the PSMC package to visualize results.
+    - Generates plots of inferred population size changes over time.
+    - `-g <generation_time>`: Specifies the generation time (e.g., 5 years for some mammals). Replace <generation_time> with the appropriate value for your species.
+    - `-u <mutation_rate>`: Specifies the mutation rate per base pair per generation (e.g., 1.25e-8 for humans). Replace <mutation_rate> with the appropriate value for your species.
+    - `-p output`: Sets the prefix for output plot files (e.g., output.svg or output.png).
+    - `output.psmc`: Input file from Step 3 containing the PSMC results.
+    - **Purpose**: Creates a visual representation of the inferred demographic history.
+
+### **Interpreting the PSMC Plot**
+
+The PSMC plot has two axes:
+
+- **X-Axis (Time in Years Before Present)**:
+    - Represents historical time, calibrated based on generation time and mutation rate.
+    - Recent history is on the left, while older history is on the right.
+- **Y-Axis (Effective Population Size, Ne)**:
+    - Represents the effective population size, an estimate of the number of breeding individuals in a population over time.
+
+**Key Features to Look For:**
+
+1.	**Peaks**: Indicate periods of population expansion (e.g., favorable environmental conditions or reduced competition).
+
+2.	**Troughs**: Reflect population bottlenecks, where the population size was significantly reduced (e.g., due to habitat loss, climate change, or human activity).
+
+3.	**Flat Regions**: Suggest stable population sizes over long periods, indicating a balance between reproduction and mortality.
+
+### Elephants mutation rate and generation time
+
+```bash
+0.6e-8  **to**  1.0xe-8  **substitutions per site per generation.**
+```
+
+```bash
+25 years generation time
+```
+
+**Key Considerations:**
+
+1.	**Generation Time**:
+
+Elephants have long generation times (typically ~**25 years** for African elephants), which plays a role in how mutation rates are calculated. Longer generation times may lead to lower per-year mutation rates compared to species with shorter lifespans.
+
+2.	**Species-Specific Variation**:
+
+- Mutation rates might differ between African elephants (*Loxodonta africana*), Asian elephants (*Elephas maximus*), and other elephantids (e.g., extinct species like mammoths).
+- Rates can also depend on the specific genomic regions studied (e.g., coding vs. non-coding DNA).
+
+## **Error Prevention**
+
+**Step 1: Generate Consensus Sequence**
+
+- **Input File Verification**:
+    - Ensure the BAM file is properly sorted and indexed using `samtools sort` and `samtools index`.
+    - Verify the reference FASTA file is indexed (`samtools faidx`) and matches the BAM file.
+- **Parameter Consistency**:
+    - Check that read depth thresholds (`-d` and `-D`) are appropriate for your dataset’s coverage.
+- **Output File Check**:
+    - Verify that the FASTQ output is generated and not empty (`ls -lh <output.fq>`).
+
+**Step 2: Convert to PSMC Format**
+
+- **Consensus File Integrity**: Ensure the consensus FASTQ file is complete and contains valid data before conversion.
+- **Quality Filtering**: Adjust the quality threshold (`-q20`) if the dataset has unusually low-quality reads.
+
+**Step 3: Run PSMC**
+
+- **Parameter Sensitivity**: Use trial runs with different parameters (`-N`, `-t`, `-r`, `-p`) to test the sensitivity of results.
+- **Computational Resources**: Check the job submission script for resource allocation (e.g., nodes, time limit) to avoid premature termination.
+- **Intermediate Checks**: Monitor the log file generated by PSMC to ensure the program is running without errors.
+
+**Step 4: Visualize Results**
+
+- **Parameter Validation**: Confirm that generation time (`-g`) and mutation rate (`-u`) are biologically accurate for your species.
+- **Output Files**: Check that the plot files are generated and properly saved in the specified directory.
+
+**General Troubleshooting Tips**:
+
+- **Dependencies**: Ensure required tools (`bcftools`, `vcfutils.pl`, `fq2psmcfa`, `psmc`) are installed and accessible in your environment.
+- **Log Errors**: Review standard output (`.o` files) and error logs (`.e` files) from job submissions for debugging.
+- **Environment**: Ensure all required modules are loaded in the HPC environment (e.g., `module load bcftools`, `module load psmc`).
+- **Storage Space**: Verify sufficient disk space for large intermediate files generated during the workflow.
+
+---
+
+## Questions:
+
+1. What happens to the plot if you change the mutation rate? And the generation time?
+2. What can you about the evolutionary history of savanna and forest elephants based on the PSMC trajectory?
+3. What conservation recommendations can you make based on the results?
+4. What other analyses would you suggest to have a finer and more recent scale?
+
+---
+
+## Job file to run the PSMC analysis
+
+Since the PSMC analysis can take a long time we are only running with one chromosome. 
+
+### First sample: **KRSWAZ**
+
+1. Run PSMC with the job file below:
+
+```bash
+#!/bin/bash
+#SBATCH --job-name=KRSWAZ_chr11_psmc
+#SBATCH -A bio240351  # Allocation name
+#SBATCH --nodes=1         # Total # of nodes (must be 1 for serial job)
+#SBATCH --ntasks=1        # Total # of MPI tasks (should be 1 for serial job)
+#SBATCH --time=10:00:00    # Total run time limit (hh:mm:ss)
+#SBATCH -o /anvil/scratch/x-hfigueiro/KRSWAZ_chr11_psmc.o%j      # Name of stdout output file
+#SBATCH -e /anvil/scratch/x-hfigueiro/KRSWAZ_chr11_psmc.e%j      # Name of stderr error file
+#SBATCH -p wholenode  # Queue (partition) name
+
+module load biocontainers/default
+module load bcftools
+module load psmc
+
+# Set variables
+SAMPLE="KRSWAZ"
+REFERENCE="/anvil/projects/x-bio240351/shared_data/reference/loxAfr4.fasta"
+BAM_FILE="/anvil/projects/x-bio240351/shared_data/bams/${SAMPLE}.loxAfr4_NC000934_11.bam"
+OUTPUT_DIR="/anvil/scratch/$USER/psmc"
+OUTPUT_FQ="${OUTPUT_DIR}/${SAMPLE}.chr11.output.fq"
+OUTPUT_PSMCFA="${OUTPUT_DIR}/${SAMPLE}.chr11.diploid.psmcfa"
+OUTPUT_PSMC="${OUTPUT_DIR}/${SAMPLE}.chr11.psmc"
+
+# Create output directory if it doesn't exist
+mkdir -p "$OUTPUT_DIR"
+
+# Generate consensus sequence
+bcftools mpileup -Ou -f "$REFERENCE" "$BAM_FILE" | \
+    bcftools call -c | \
+    vcfutils.pl vcf2fq -d 10 -D 100 > "$OUTPUT_FQ"
+
+# Check if consensus file was generated successfully
+if [[ ! -s "$OUTPUT_FQ" ]]; then
+    echo "Error: Consensus FASTQ file was not generated. Check input BAM and reference files." >&2
+    exit 1
+fi
+
+# Convert to PSMC input format
+fq2psmcfa -q20 "$OUTPUT_FQ" > "$OUTPUT_PSMCFA"
+
+# Check if PSMCFA file was generated successfully
+if [[ ! -s "$OUTPUT_PSMCFA" ]]; then
+    echo "Error: PSMCFA file was not generated. Check input FASTQ file." >&2
+    exit 1
+fi
+
+# Run PSMC
+psmc -N25 -t15 -r5 -p "4+25*2+4+6" -o "$OUTPUT_PSMC" "$OUTPUT_PSMCFA"
+
+# Check if PSMC run was successful
+if [[ $? -ne 0 ]]; then
+    echo "Error: PSMC analysis failed." >&2
+    exit 1
+fi
+
+echo "PSMC analysis completed successfully. Results are in $OUTPUT_DIR"
+
+```
+
+1. Run the job file:
+
+```bash
+sbatch KRSWAZ_chr11_psmc.sh
+```
+
+1. Activate interactive mode at the terminal
+
+```bash
+sinteractive --job-name=KRWAS_plot -A bio240351 --nodes=1 --ntasks=1 --time=10:00 -p wholenode
+```
+
+1. Load the required modules
+
+```bash
+module load biocontainers/default
+module load psmc
+```
+
+1. Plot the results
+
+```bash
+psmc_plot.pl -u 1e-8 -g 25 -p /anvil/scratch/$USER/psmc/KRWAS_chr11 /anvil/scratch/$USER/psmc/KRWAS_chr11.psmc
+```
+
+You can change the mutation rate (`u`) and generation time (`g`) to observe the effect on the plot.
+
+1. Download the results
+
+```bash
+/anvil/scratch/$USER/psmc/KRWAS_chr11.pdf
+```
+
+---
+
+### Second sample: **CH0893**
+
+1. Run PSMC with the job file below:
+
+```bash
+#!/bin/bash
+#SBATCH --job-name=CH0893_chr11_psmc
+#SBATCH -A bio240351  # Allocation name
+#SBATCH --nodes=1         # Total # of nodes (must be 1 for serial job)
+#SBATCH --ntasks=1        # Total # of MPI tasks (should be 1 for serial job)
+#SBATCH --time=10:00:00    # Total run time limit (hh:mm:ss)
+#SBATCH -o /anvil/scratch/x-hfigueiro/CH0893_chr11_psmc.o%j      # Name of stdout output file
+#SBATCH -e /anvil/scratch/x-hfigueiro/CH0893_chr11_psmc.e%j      # Name of stderr error file
+#SBATCH -p wholenode  # Queue (partition) name
+
+module load biocontainers/default
+module load bcftools
+module load psmc
+
+# Set variables
+SAMPLE="CH0893"
+REFERENCE="/anvil/projects/x-bio240351/shared_data/reference/loxAfr4.fasta"
+BAM_FILE="/anvil/projects/x-bio240351/shared_data/bams/${SAMPLE}.loxAfr4_NC000934_11.bam"
+OUTPUT_DIR="/anvil/scratch/$USER/psmc"
+OUTPUT_FQ="${OUTPUT_DIR}/${SAMPLE}.chr11.output.fq"
+OUTPUT_PSMCFA="${OUTPUT_DIR}/${SAMPLE}.chr11.diploid.psmcfa"
+OUTPUT_PSMC="${OUTPUT_DIR}/${SAMPLE}.chr11.psmc"
+
+# Create output directory if it doesn't exist
+mkdir -p "$OUTPUT_DIR"
+
+# Generate consensus sequence
+bcftools mpileup -Ou -f "$REFERENCE" "$BAM_FILE" | \
+    bcftools call -c | \
+    vcfutils.pl vcf2fq -d 10 -D 100 > "$OUTPUT_FQ"
+
+# Check if consensus file was generated successfully
+if [[ ! -s "$OUTPUT_FQ" ]]; then
+    echo "Error: Consensus FASTQ file was not generated. Check input BAM and reference files." >&2
+    exit 1
+fi
+
+# Convert to PSMC input format
+fq2psmcfa -q20 "$OUTPUT_FQ" > "$OUTPUT_PSMCFA"
+
+# Check if PSMCFA file was generated successfully
+if [[ ! -s "$OUTPUT_PSMCFA" ]]; then
+    echo "Error: PSMCFA file was not generated. Check input FASTQ file." >&2
+    exit 1
+fi
+
+# Run PSMC
+psmc -N25 -t15 -r5 -p "4+25*2+4+6" -o "$OUTPUT_PSMC" "$OUTPUT_PSMCFA"
+
+# Check if PSMC run was successful
+if [[ $? -ne 0 ]]; then
+    echo "Error: PSMC analysis failed." >&2
+    exit 1
+fi
+
+echo "PSMC analysis completed successfully. Results are in $OUTPUT_DIR"
+
+```
+
+1. Run the job file:
+
+```bash
+sbatch CH0893_chr11_psmc
+```
+
+1. Activate interactive mode at the terminal
+
+```bash
+sinteractive --job-name=KRWAS_plot -A bio240351 --nodes=1 --ntasks=1 --time=10:00 -p wholenode
+```
+
+1. Load the required modules:
+
+```bash
+module load biocontainers/default
+module load psmc
+```
+
+1. Plot the results:
+
+```bash
+psmc_plot.pl -u 1e-8 -g 25 -p /anvil/scratch/$USER/psmc/CH0893_chr11 /anvil/scratch/$USER/psmc/CH0893_chr11.psmc
+```
+
+You can change the mutation rate (`u`) and generation time (`g`) to observe the effect on the plot.
+
+1. Download the results:
+
+```bash
+/anvil/scratch/$USER/psmc/CH0893_chr11.pdf
+```
+
+**Additional Resources**
+
+- [PSMC GitHub Repository](https://github.com/lh3/psmc)
